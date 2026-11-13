@@ -1,0 +1,65 @@
+{
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 2,
+      "properties": {
+        "markdown": "# to-do-list-api\nCPU de la EC2 (nativa), errores de RDS y tareas pendientes (propias). Las líneas rojas son los umbrales de las alarmas."
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 2,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "EC2 CPUUtilization (%)",
+        "region": "__REGION__",
+        "view": "timeSeries",
+        "stat": "Average",
+        "period": 300,
+        "metrics": [["AWS/EC2", "CPUUtilization", "InstanceId", "__INSTANCE_ID__"]],
+        "yAxis": { "left": { "min": 0, "max": 100 } },
+        "annotations": { "horizontal": [{ "label": "Alarma > 70%", "value": 70, "color": "#d62728" }] }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 2,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "Errores de RDS (Sum / 1 min)",
+        "region": "__REGION__",
+        "view": "timeSeries",
+        "stat": "Sum",
+        "period": 60,
+        "metrics": [["__NAMESPACE__", "RDSErrors"]],
+        "yAxis": { "left": { "min": 0 } },
+        "annotations": { "horizontal": [{ "label": "Alarma >= 1", "value": 1, "color": "#d62728" }] }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 2,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "Tareas pendientes (Max / 5 min)",
+        "region": "__REGION__",
+        "view": "timeSeries",
+        "stat": "Maximum",
+        "period": 300,
+        "metrics": [["__NAMESPACE__", "PendingTasks"]],
+        "yAxis": { "left": { "min": 0 } },
+        "annotations": { "horizontal": [{ "label": "Alarma > 20", "value": 20, "color": "#d62728" }] }
+      }
+    }
+  ]
+}

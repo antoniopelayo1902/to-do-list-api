@@ -1,0 +1,90 @@
+name: Provision infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: "Versión inicial que reporta /version antes del primer deploy"
+        required: false
+        default: "v0.0.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure remote state bucket (S3)
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="tfstate-${ACCOUNT_ID}-practica04"
+          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Creando bucket $BUCKET"
+            if [ "$AWS_REGION" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "$BUCKET"
+            else
+              aws s3api create-bucket --bucket "$BUCKET" --create-bucket-configuration LocationConstraint="$AWS_REGION"
+            fi
+            aws s3api put-public-access-block --bucket "$BUCKET" \
+              --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+            aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket "$BUCKET" \
+              --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          fi
+          echo "TF_STATE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false -backend-config="bucket=${TF_STATE_BUCKET}"
+
+      - name: Terraform apply
+        env:
+          TF_VAR_repo_url: https://github.com/${{ github.repository }}.git
+          TF_VAR_repo_branch: ${{ github.event.repository.default_branch || 'main' }}
+          TF_VAR_app_version: ${{ inputs.app_version }}
+          TF_VAR_ssh_public_key: ${{ secrets.EC2_SSH_PUBLIC_KEY }}
+          TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+          TF_VAR_ssh_allowed_cidrs: ${{ vars.SSH_ALLOWED_CIDRS }}
+          TF_VAR_app_allowed_cidrs: ${{ vars.APP_ALLOWED_CIDRS }}
+        run: terraform apply -auto-approve -input=false
+
+      - name: Summary
+        run: |
+          {
+            echo "## Infraestructura lista"
+            echo ""
+            echo "| Output | Valor |"
+            echo "|---|---|"
+            for k in app_url instance_id rds_identifier secret_name dashboard_url; do
+              echo "| $k | $(terraform output -raw $k) |"
+            done
+            echo ""
+            echo "State: s3://${TF_STATE_BUCKET}/practica04/terraform.tfstate"
+            echo ""
+            echo "Confirma la suscripción de SNS en tu correo. La app tarda ~3-5 min en arrancar y RDS ~5-10 min."
+          } >> "$GITHUB_STEP_SUMMARY"

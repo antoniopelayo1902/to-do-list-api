@@ -1,0 +1,86 @@
+name: Deploy (Continuous Deployment)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release a desplegar (p. ej. v1.0.0)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  INSTANCE_NAME: todo-list-api-ec2
+  APP_PORT: "8000"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Tag inválido: $TAG"; exit 1; }
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find EC2 public IP
+        run: |
+          IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          if [ -z "$IP" ] || [ "$IP" = "None" ]; then
+            echo "::error::No hay una EC2 '${INSTANCE_NAME}' corriendo. Corre primero Provision infrastructure."
+            exit 1
+          fi
+          echo "EC2_IP=$IP" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          for i in $(seq 1 20); do
+            ssh-keyscan -T 5 -H "$EC2_IP" >> ~/.ssh/known_hosts 2>/dev/null && break
+            echo "SSH aún no responde, reintento $i/20"; sleep 10
+          done
+
+      - name: Download release on EC2 and restart
+        run: |
+          ssh -i ~/.ssh/id_deploy -o ConnectTimeout=15 "ubuntu@${EC2_IP}" \
+            "sudo bash -s -- '${TAG}' '${GITHUB_REPOSITORY}'" < scripts/deploy_on_ec2.sh
+
+      - name: Verify /version
+        run: |
+          for i in $(seq 1 20); do
+            V=$(curl -fsS --max-time 5 "http://${EC2_IP}:${APP_PORT}/version" | jq -r .version || true)
+            echo "Intento $i: /version = ${V:-sin respuesta}"
+            if [ "$V" = "$TAG" ]; then
+              echo "### Deploy OK: ${TAG} corriendo en http://${EC2_IP}:${APP_PORT}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::/version no regresó ${TAG}"
+          exit 1

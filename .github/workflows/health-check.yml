@@ -1,0 +1,46 @@
+name: Health check
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  INSTANCE_NAME: todo-list-api-ec2
+  APP_PORT: "8000"
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find EC2 public IP
+        run: |
+          IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          if [ -z "$IP" ] || [ "$IP" = "None" ]; then
+            echo "::error::No hay una EC2 '${INSTANCE_NAME}' corriendo."
+            exit 1
+          fi
+          echo "EC2_IP=$IP" >> "$GITHUB_ENV"
+
+      - name: GET /health
+        run: |
+          CODE=$(curl -sS --max-time 15 -o body.json -w '%{http_code}' "http://${EC2_IP}:${APP_PORT}/health" || echo 000)
+          echo "HTTP $CODE"; cat body.json 2>/dev/null || true; echo
+          {
+            echo "### /health -> HTTP $CODE"
+            echo '```json'; cat body.json 2>/dev/null || echo "sin respuesta"; echo; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$CODE" = "200" ] && [ "$(jq -r .database body.json)" = "OK" ]

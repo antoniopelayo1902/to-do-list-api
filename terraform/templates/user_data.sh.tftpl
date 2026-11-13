@@ -1,0 +1,49 @@
+#!/bin/bash
+# Arranque de la EC2: clona el repo, instala dependencias y levanta la API como servicio systemd.
+set -euxo pipefail
+exec > >(tee -a /var/log/todo-user-data.log) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y git python3-venv python3-pip curl unzip jq
+
+APP_DIR=/opt/todo
+mkdir -p $APP_DIR/releases
+git clone --depth 1 --branch "${repo_branch}" "${repo_url}" $APP_DIR/releases/bootstrap
+ln -sfn $APP_DIR/releases/bootstrap $APP_DIR/current
+
+python3 -m venv $APP_DIR/venv
+$APP_DIR/venv/bin/pip install --upgrade pip
+$APP_DIR/venv/bin/pip install -r $APP_DIR/current/src/requirements.txt
+
+# Solo se guarda el NOMBRE del secret; la app lee usuario/contraseña de Secrets Manager en tiempo de ejecución.
+cat > /etc/todo-api.env <<EOF
+APP_VERSION=${app_version}
+SECRET_ID=${secret_id}
+AWS_REGION=${aws_region}
+AWS_DEFAULT_REGION=${aws_region}
+METRICS_NAMESPACE=${metrics_namespace}
+EOF
+
+cat > /etc/systemd/system/todo-api.service <<EOF
+[Unit]
+Description=to-do-list-api
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/todo/current/src
+EnvironmentFile=/etc/todo-api.env
+ExecStart=/opt/todo/venv/bin/uvicorn main:app --host 0.0.0.0 --port ${app_port}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+chown -R ubuntu:ubuntu $APP_DIR
+systemctl daemon-reload
+systemctl enable --now todo-api
+echo "user_data terminado"

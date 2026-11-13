@@ -1,0 +1,53 @@
+{
+  "_comment": "Terraform lee este archivo (terraform/main.tf) y crea una alarma por entrada. Tokens: __PROJECT__, __NAMESPACE__, __INSTANCE_ID__.",
+  "alarms": [
+    {
+      "name": "__PROJECT__-ec2-cpu-high",
+      "description": "Métrica nativa: CPU promedio de la EC2 > 70% durante 10 minutos.",
+      "rationale": "La EC2 reporta cada 5 min (monitoreo básico). Dos periodos seguidos evitan alertar por un pico aislado, p. ej. un pip install durante el deploy.",
+      "action": "Revisar en el dashboard si coincide con más tráfico o con un deploy; si es sostenido, revisar procesos en la EC2 o subir el tipo de instancia.",
+      "namespace": "AWS/EC2",
+      "metric_name": "CPUUtilization",
+      "dimensions": { "InstanceId": "__INSTANCE_ID__" },
+      "statistic": "Average",
+      "period": 300,
+      "evaluation_periods": 2,
+      "datapoints_to_alarm": 2,
+      "threshold": 70,
+      "comparison_operator": "GreaterThanThreshold",
+      "treat_missing_data": "missing"
+    },
+    {
+      "name": "__PROJECT__-rds-errors",
+      "description": "Métrica propia: 1 o más errores al leer/escribir en RDS en 1 minuto.",
+      "rationale": "En operación normal el valor es 0, así que cualquier error es señal de que la base de datos no responde. Un solo periodo de 1 min avisa rápido.",
+      "action": "Revisar en el dashboard si los errores empezaron de golpe (RDS detenida o caída) o poco a poco; revisar el estado de RDS y el log del servicio en la EC2.",
+      "namespace": "__NAMESPACE__",
+      "metric_name": "RDSErrors",
+      "dimensions": {},
+      "statistic": "Sum",
+      "period": 60,
+      "evaluation_periods": 1,
+      "datapoints_to_alarm": 1,
+      "threshold": 1,
+      "comparison_operator": "GreaterThanOrEqualToThreshold",
+      "treat_missing_data": "notBreaching"
+    },
+    {
+      "name": "__PROJECT__-pending-tasks-high",
+      "description": "Métrica propia: más de 20 tareas pendientes (done=false).",
+      "rationale": "PendingTasks mide el backlog real de la lista. Si crece de más, las tareas se están creando más rápido de lo que se completan. Se publica en cada /health (cada 5 min) y en cada GET/POST.",
+      "action": "Revisar en el dashboard desde cuándo crece el backlog; priorizar o cerrar tareas, o investigar si un cliente está creando tareas duplicadas.",
+      "namespace": "__NAMESPACE__",
+      "metric_name": "PendingTasks",
+      "dimensions": {},
+      "statistic": "Maximum",
+      "period": 300,
+      "evaluation_periods": 1,
+      "datapoints_to_alarm": 1,
+      "threshold": 20,
+      "comparison_operator": "GreaterThanThreshold",
+      "treat_missing_data": "notBreaching"
+    }
+  ]
+}
