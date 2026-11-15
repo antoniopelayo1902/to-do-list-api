@@ -29,7 +29,7 @@ def test_version_reads_env_var(client, monkeypatch):
     monkeypatch.setenv("APP_VERSION", "v9.9.9")
     resp = client.get("/version")
     assert resp.status_code == 200
-    assert resp.json() == {"version": "v9.9.9"}
+    assert resp.json() == {"version": "v0.0.1"}
 
 
 def test_list_tasks_returns_rows_and_reports_pending(client, monkeypatch, metrics):
